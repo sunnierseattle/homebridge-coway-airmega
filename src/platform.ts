@@ -60,6 +60,10 @@ export class CowayPlatform implements DynamicPlatformPlugin {
       return;
     }
 
+    // Reached through api.hap rather than imported: homebridge is a
+    // devDependency, so importing a value from it is not runtime-safe.
+    const purifierCategory = this.api.hap.Categories.AIR_PURIFIER;
+
     let devices: PurifierDevice[];
     try {
       devices = await client.listPurifiers();
@@ -82,10 +86,19 @@ export class CowayPlatform implements DynamicPlatformPlugin {
 
       if (existing) {
         existing.context.device = device;
+        // Accessories cached before this was set carry Categories.OTHER, which
+        // HomeKit draws with a generic icon. Correcting it here fixes existing
+        // installs on restart, without needing to re-pair.
+        if (existing.category !== purifierCategory) {
+          existing.category = purifierCategory;
+          this.api.updatePlatformAccessories([existing]);
+        }
         this.managed.push(new AirmegaAccessory(this, existing, client, device));
         this.log.info(`Restored ${device.nickname}`);
       } else {
-        const accessory = new this.api.platformAccessory(device.nickname, uuid);
+        // Without an explicit category HomeKit falls back to a generic icon.
+        const accessory = new this.api.platformAccessory(
+          device.nickname, uuid, purifierCategory);
         accessory.context.device = device;
         this.managed.push(new AirmegaAccessory(this, accessory, client, device));
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);

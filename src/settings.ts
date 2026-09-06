@@ -18,7 +18,7 @@ export const Endpoint = {
 export const CLIENT_ID = 'cwid-prd-iocare-plus-25MJGcYX';
 export const CLIENT_NAME = 'IOCARE';
 export const APP_VERSION = '2.15.0';
-export const USER_AGENT = `${PLUGIN_NAME}/1.1.0`;
+export const USER_AGENT = PLUGIN_NAME;
 
 /** Coway marks purifiers with this Korean category name ("air purifier"). */
 export const PURIFIER_CATEGORY = '청정기';
