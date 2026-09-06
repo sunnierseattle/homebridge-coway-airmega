@@ -42,6 +42,16 @@
   "files": [
     "dist",
     "config.schema.json",
-    "README.md"
-  ]
+    "README.md",
+    "LICENSE"
+  ],
+  "author": "sunnierseattle",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sunnierseattle/homebridge-coway-airmega.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sunnierseattle/homebridge-coway-airmega/issues"
+  },
+  "homepage": "https://github.com/sunnierseattle/homebridge-coway-airmega#readme"
 }
