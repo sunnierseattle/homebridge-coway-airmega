@@ -98,7 +98,10 @@ and the fix lives in `src/purifierState.ts`.
 Coway's hardware and HomeKit's model do not line up exactly. Where they diverge:
 
 - **Fan speed.** The hardware has three steps, so the HomeKit slider snaps to
-  33 / 67 / 100. Dragging to 0 powers the unit off.
+  33 / 67 / 100. Dragging to 0 powers the unit off. Setting any other speed on a
+  unit that is off powers it on first — Coway silently ignores a fan command
+  sent to a powered-off purifier, which otherwise makes the slider look broken.
+  Selecting a mode behaves the same way.
 - **Modes.** HomeKit's `TargetAirPurifierState` offers only AUTO and MANUAL.
   Coway's *auto* and *eco* both report as AUTO; *night* and *rapid* report as
   MANUAL. Enable `exposeModeSwitches` to select them directly.

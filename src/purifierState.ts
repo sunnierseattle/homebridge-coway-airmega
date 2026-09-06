@@ -221,3 +221,38 @@ export function lightCommand(on: boolean, convention: LightConvention): string {
 export function detectLightConvention(raw: number | undefined): LightConvention | undefined {
   return raw === 1 || raw === 3 ? 'mode' : undefined;
 }
+
+/** A single Coway control call: one attribute, one value. */
+export interface Command {
+  attribute: string;
+  value: string;
+}
+
+/**
+ * Coway silently ignores a fan-speed or mode command sent to a powered-off
+ * unit, which made the HomeKit slider look broken. These build the full command
+ * sequence, prepending a power-on where one is needed. Order matters: the unit
+ * must be on before the setting it enables.
+ */
+export const commandsFor = {
+  speed(isOn: boolean, percent: number): Command[] {
+    if (percent <= 0) {
+      return [{ attribute: Attr.POWER, value: '0' }];
+    }
+    const cmds: Command[] = [];
+    if (!isOn) {
+      cmds.push({ attribute: Attr.POWER, value: '1' });
+    }
+    cmds.push({ attribute: Attr.FAN_SPEED, value: fromRotationSpeed(percent) });
+    return cmds;
+  },
+
+  mode(isOn: boolean, mode: string): Command[] {
+    const cmds: Command[] = [];
+    if (!isOn) {
+      cmds.push({ attribute: Attr.POWER, value: '1' });
+    }
+    cmds.push({ attribute: Attr.MODE, value: mode });
+    return cmds;
+  },
+};

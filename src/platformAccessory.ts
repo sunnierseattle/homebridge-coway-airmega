@@ -3,8 +3,8 @@ import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge
 import type { CowayClient, PurifierDevice } from './cowayClient.js';
 import type { CowayPlatform } from './platform.js';
 import {
-  detectLightConvention, fromRotationSpeed, isLightOn, lightCommand, toAirQuality,
-  toRotationSpeed, type LightConvention, type PurifierState,
+  commandsFor, detectLightConvention, isLightOn, lightCommand,
+  toAirQuality, toRotationSpeed, type Command, type LightConvention, type PurifierState,
 } from './purifierState.js';
 import { Attr, Mode } from './settings.js';
 
@@ -60,16 +60,19 @@ export class AirmegaAccessory {
 
     this.purifier.getCharacteristic(Characteristic.TargetAirPurifierState)
       .onGet(() => this.read((s) => (s.autoMode ? 1 : 0), 1))
-      .onSet((v) => (v === 1
-        ? this.send(Attr.MODE, Mode.AUTO)
-        : this.send(Attr.FAN_SPEED, fromRotationSpeed(toRotationSpeed(this.state?.fanSpeed ?? 1)))));
+      .onSet((v) => {
+        const isOn = this.state?.isOn ?? false;
+        return v === 1
+          ? this.sendAll(commandsFor.mode(isOn, Mode.AUTO))
+          // Leaving auto has no direct command; selecting a speed is what puts
+          // the unit into manual, so re-assert the current one.
+          : this.sendAll(commandsFor.speed(isOn, toRotationSpeed(this.state?.fanSpeed ?? 1)));
+      });
 
     this.purifier.getCharacteristic(Characteristic.RotationSpeed)
       .setProps({ minStep: 33 })
       .onGet(() => this.read((s) => toRotationSpeed(s.fanSpeed), 0))
-      .onSet((v) => (Number(v) === 0
-        ? this.send(Attr.POWER, '0')
-        : this.send(Attr.FAN_SPEED, fromRotationSpeed(Number(v)))));
+      .onSet((v) => this.sendAll(commandsFor.speed(this.state?.isOn ?? false, Number(v))));
 
     this.purifier.getCharacteristic(Characteristic.LockPhysicalControls)
       .onGet(() => this.read((s) => (s.buttonLock ? 1 : 0), 0))
@@ -95,7 +98,8 @@ export class AirmegaAccessory {
         svc.getCharacteristic(Characteristic.On)
           .onGet(() => this.read((s) => Boolean(s[m.flag]), false))
           // Turning a mode off has no inverse command, so fall back to auto.
-          .onSet((v) => this.send(Attr.MODE, v ? m.value : Mode.AUTO));
+          .onSet((v) => this.sendAll(
+            commandsFor.mode(this.state?.isOn ?? false, v ? m.value : Mode.AUTO)));
         this.modeSwitches.set(m.key, svc);
       }
     }
@@ -111,6 +115,13 @@ export class AirmegaAccessory {
 
   private read<T extends CharacteristicValue>(pick: (s: PurifierState) => T, fallback: T): T {
     return this.state ? pick(this.state) : fallback;
+  }
+
+  /** Apply commands in order; Coway accepts only one attribute per call. */
+  private async sendAll(commands: Command[]): Promise<void> {
+    for (const c of commands) {
+      await this.send(c.attribute, c.value);
+    }
   }
 
   private async send(attribute: string, value: string): Promise<void> {

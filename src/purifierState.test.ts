@@ -9,6 +9,7 @@ import {
   isLightOn,
   lightCommand,
   detectLightConvention,
+  commandsFor,
 } from './purifierState.js';
 
 describe('extractStatusPayload', () => {
@@ -188,5 +189,42 @@ describe('light conventions', () => {
     expect(detectLightConvention(3)).toBe('mode');
     expect(detectLightConvention(0)).toBeUndefined();
     expect(detectLightConvention(2)).toBeUndefined();
+  });
+});
+
+describe('commandsFor — powering on implicitly', () => {
+  it('turns the unit on before setting a speed, when it is off', () => {
+    // Coway ignores a fan-speed command on a powered-off unit, so the HomeKit
+    // slider appeared to do nothing.
+    expect(commandsFor.speed(false, 100)).toEqual([
+      { attribute: '0001', value: '1' },
+      { attribute: '0003', value: '3' },
+    ]);
+  });
+
+  it('does not resend power when the unit is already on', () => {
+    expect(commandsFor.speed(true, 33)).toEqual([{ attribute: '0003', value: '1' }]);
+  });
+
+  it('treats speed 0 as power off, and never pairs it with a fan command', () => {
+    expect(commandsFor.speed(true, 0)).toEqual([{ attribute: '0001', value: '0' }]);
+    expect(commandsFor.speed(false, 0)).toEqual([{ attribute: '0001', value: '0' }]);
+  });
+
+  it('powers on before selecting a mode, when the unit is off', () => {
+    expect(commandsFor.mode(false, '2')).toEqual([
+      { attribute: '0001', value: '1' },
+      { attribute: '0002', value: '2' },
+    ]);
+  });
+
+  it('sends the mode alone when the unit is already on', () => {
+    expect(commandsFor.mode(true, '1')).toEqual([{ attribute: '0002', value: '1' }]);
+  });
+
+  it('orders power before the setting it enables', () => {
+    // Ordering matters: Coway drops the second command if the unit is still off.
+    const [first] = commandsFor.speed(false, 66);
+    expect(first.attribute).toBe('0001');
   });
 });
