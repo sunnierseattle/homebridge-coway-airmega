@@ -1,5 +1,5 @@
 {
-  "name": "homebridge-coway-airmega",
+  "name": "homebridge-coway-iocare",
   "displayName": "Coway Airmega",
   "version": "1.1.0",
   "description": "Homebridge plugin for WiFi-connected Coway Airmega air purifiers via the IoCare cloud API.",
@@ -48,10 +48,10 @@
   "author": "sunnierseattle",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sunnierseattle/homebridge-coway-airmega.git"
+    "url": "git+https://github.com/sunnierseattle/homebridge-coway-iocare.git"
   },
   "bugs": {
-    "url": "https://github.com/sunnierseattle/homebridge-coway-airmega/issues"
+    "url": "https://github.com/sunnierseattle/homebridge-coway-iocare/issues"
   },
-  "homepage": "https://github.com/sunnierseattle/homebridge-coway-airmega#readme"
+  "homepage": "https://github.com/sunnierseattle/homebridge-coway-iocare#readme"
 }

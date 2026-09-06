@@ -2,7 +2,7 @@
 export const PLATFORM_NAME = 'CowayAirmega';
 
 /** npm package name; must match package.json `name`. */
-export const PLUGIN_NAME = 'homebridge-coway-airmega';
+export const PLUGIN_NAME = 'homebridge-coway-iocare';
 
 /** Coway IoCare endpoints. */
 export const Endpoint = {
@@ -18,7 +18,7 @@ export const Endpoint = {
 export const CLIENT_ID = 'cwid-prd-iocare-plus-25MJGcYX';
 export const CLIENT_NAME = 'IOCARE';
 export const APP_VERSION = '2.15.0';
-export const USER_AGENT = `${PLUGIN_NAME}/1.0.0`;
+export const USER_AGENT = `${PLUGIN_NAME}/1.1.0`;
 
 /** Coway marks purifiers with this Korean category name ("air purifier"). */
 export const PURIFIER_CATEGORY = '청정기';

@@ -1,6 +1,6 @@
-# homebridge-coway-airmega
+# homebridge-coway-iocare
 
-[![npm version](https://img.shields.io/npm/v/homebridge-coway-airmega.svg)](https://www.npmjs.com/package/homebridge-coway-airmega)
+[![npm version](https://img.shields.io/npm/v/homebridge-coway-iocare.svg)](https://www.npmjs.com/package/homebridge-coway-iocare)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Homebridge plugin that brings WiFi-connected **Coway Airmega** air purifiers into
@@ -112,7 +112,7 @@ Coway's hardware and HomeKit's model do not line up exactly. Where they diverge:
 Search for **Coway Airmega** in the Homebridge UI plugin browser, or:
 
 ```bash
-npm install -g homebridge-coway-airmega
+npm install -g homebridge-coway-iocare
 ```
 
 ## Configuration
