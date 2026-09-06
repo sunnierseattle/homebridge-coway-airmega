@@ -10,6 +10,9 @@ export const Endpoint = {
   REDIRECT: 'https://iocare-redirect.iotsvc.coway.com/redirect_bridge_empty.html',
   BASE: 'https://iocare.iotsvc.coway.com/api/v1',
   WEBVIEW: 'https://iocare2.coway.com/en',
+  /** The webview's own API proxy. The supplies (filter) endpoint lives here,
+   *  not on the main API host. */
+  PROXY: 'https://iocare2.coway.com/api/proxy/api/v1',
 } as const;
 
 export const CLIENT_ID = 'cwid-prd-iocare-plus-25MJGcYX';

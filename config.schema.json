@@ -3,7 +3,7 @@
   "pluginType": "platform",
   "singular": true,
   "headerDisplay": "Controls WiFi-connected Coway Airmega purifiers through the IoCare cloud. Coway offers no local API, so an IoCare account is required.",
-  "footerDisplay": "Accounts that sign in with Google or Apple cannot be used — the plugin needs an email/password login. Coway also forces a password change every 60 days.",
+  "footerDisplay": "Accounts that sign in with Google or Apple cannot be used \u2014 the plugin needs an email/password login. Coway also forces a password change every 60 days.",
   "schema": {
     "type": "object",
     "properties": {
@@ -23,7 +23,9 @@
         "title": "IoCare Password",
         "type": "string",
         "required": true,
-        "x-schema-form": { "type": "password" }
+        "x-schema-form": {
+          "type": "password"
+        }
       },
       "pollIntervalSeconds": {
         "title": "Poll Interval (seconds)",
@@ -35,7 +37,34 @@
       "exposeLight": {
         "title": "Expose the panel light as a bulb",
         "type": "boolean",
-        "default": false
+        "default": false,
+        "description": "Panel light. On the 250S and IconS the plugin auto-detects the inverted convention once it observes a distinguishing value; set Light Convention below if it guesses wrong."
+      },
+      "exposeModeSwitches": {
+        "title": "Expose Night / Rapid / Eco as switches",
+        "type": "boolean",
+        "default": false,
+        "description": "HomeKit's air purifier has only Auto and Manual. These switches reach the modes it cannot express. Rapid is a 250S feature and Eco an AP-1512HHS feature; a switch for a mode your model lacks will simply be rejected by Coway."
+      },
+      "lightConvention": {
+        "title": "Light Convention",
+        "type": "string",
+        "default": "onOff",
+        "oneOf": [
+          {
+            "title": "On/Off - 400S and most models (verified)",
+            "enum": [
+              "onOff"
+            ]
+          },
+          {
+            "title": "Mode enum - 250S, IconS",
+            "enum": [
+              "mode"
+            ]
+          }
+        ],
+        "description": "Only relevant when the panel light is exposed. Leave on the default unless the light behaves backwards."
       }
     }
   }

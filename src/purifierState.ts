@@ -11,6 +11,15 @@ export interface StatusPayload {
   iaqGrade?: number;
 }
 
+/** How a model encodes attribute 0007. See LIGHT_CONVENTIONS below. */
+export type LightConvention = 'onOff' | 'mode';
+
+/** One filter as reported by Coway's supplies endpoint. */
+export interface FilterReading {
+  name: string;
+  remainPct: number;
+}
+
 export interface PurifierState {
   isOn: boolean;
   autoMode: boolean;
@@ -18,12 +27,15 @@ export interface PurifierState {
   rapidMode: boolean;
   ecoMode: boolean;
   fanSpeed: number;
-  lightOn: boolean;
+  /** Raw attribute 0007. Its meaning depends on the model's convention. */
+  lightRaw?: number;
   buttonLock: boolean;
   online: boolean;
   /** Percent of filter life remaining, or undefined when unreported. */
   preFilterPct?: number;
   max2Pct?: number;
+  /** UK and EU models carry a third, odor filter. Undefined elsewhere. */
+  odorFilterPct?: number;
   aqGrade?: number;
   pm10?: number;
   pm25?: number;
@@ -103,7 +115,31 @@ function remaining(used: number | undefined): number | undefined {
   return used === undefined ? undefined : 100 - used;
 }
 
-export function parsePurifierState(payload: StatusPayload): PurifierState {
+/**
+ * Coway reports filter life two ways and no model populates both reliably.
+ * The supplies endpoint is authoritative where it works; the sensor attributes
+ * are the fallback for models whose endpoint Coway has not finished (the 250S).
+ * Anything still unknown stays undefined, so callers can omit the service
+ * rather than publish a reassuring and wrong 100%.
+ */
+function filterLife(
+  endpoint: FilterReading[] | undefined,
+  sensor: AttributeMap,
+): Pick<PurifierState, 'preFilterPct' | 'max2Pct' | 'odorFilterPct'> {
+  const pre = endpoint?.find((f) => /pre-?filter/i.test(f.name));
+  const main = endpoint?.find((f) => !/pre-?filter/i.test(f.name));
+
+  return {
+    preFilterPct: pre?.remainPct ?? remaining(sensor['0011']),
+    max2Pct: main?.remainPct ?? remaining(sensor['0012']),
+    odorFilterPct: remaining(sensor['0013']),
+  };
+}
+
+export function parsePurifierState(
+  payload: StatusPayload,
+  filters?: FilterReading[],
+): PurifierState {
   const { status, sensor, network, iaqGrade } = payload;
   const mode = status[Attr.MODE];
 
@@ -116,11 +152,10 @@ export function parsePurifierState(payload: StatusPayload): PurifierState {
     rapidMode: String(mode) === Mode.RAPID,
     ecoMode: String(mode) === Mode.ECO,
     fanSpeed: status[Attr.FAN_SPEED] ?? 0,
-    lightOn: status[Attr.LIGHT] === 2,
+    lightRaw: status[Attr.LIGHT],
     buttonLock: status[Attr.LOCK] === 1,
     online: network.wifiConnected !== false,
-    preFilterPct: remaining(sensor['0011']),
-    max2Pct: remaining(sensor['0012']),
+    ...filterLife(filters, sensor),
     aqGrade: iaqGrade,
     pm10: sensor['0002'],
     pm25: sensor['0001'],
@@ -155,4 +190,34 @@ export function toAirQuality(grade: number | undefined): number {
   case 4: return 5;
   default: return 0;
   }
+}
+
+/**
+ * Attribute 0007 carries two contradictory conventions across the range, and a
+ * reading of 0 or 2 is valid under both, so they cannot always be told apart.
+ *
+ *  - `onOff` (verified on the 400S): 2 is on, 0 is off.
+ *  - `mode`  (250S, IconS): an enum where 0 is on, 1 is AQI-off, 2 is off and
+ *            3 is half-off, which the IconS alone supports.
+ */
+export function isLightOn(raw: number | undefined, convention: LightConvention): boolean {
+  if (raw === undefined) {
+    return false;
+  }
+  return convention === 'onOff' ? raw === 2 : raw !== 2;
+}
+
+export function lightCommand(on: boolean, convention: LightConvention): string {
+  if (convention === 'onOff') {
+    return on ? '2' : '0';
+  }
+  return on ? '0' : '2';
+}
+
+/**
+ * Values 1 and 3 exist only under the enum convention, so seeing one is proof.
+ * 0 and 2 are ambiguous and yield undefined rather than a guess.
+ */
+export function detectLightConvention(raw: number | undefined): LightConvention | undefined {
+  return raw === 1 || raw === 3 ? 'mode' : undefined;
 }

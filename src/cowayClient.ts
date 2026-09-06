@@ -1,6 +1,8 @@
 import { login as defaultLogin, refresh as defaultRefresh, type Tokens } from './cowayAuth.js';
 import { CowayError, RateLimitedError, ServerMaintenanceError } from './errors.js';
-import { extractStatusPayload, parsePurifierState, type PurifierState } from './purifierState.js';
+import {
+  extractStatusPayload, parsePurifierState, type FilterReading, type PurifierState,
+} from './purifierState.js';
 import {
   APP_VERSION,
   Endpoint,
@@ -182,7 +184,35 @@ export class CowayClient {
     if (!res.ok) {
       throw new CowayError(`Coway status page returned ${res.status}.`);
     }
-    return parsePurifierState(extractStatusPayload(await res.text()));
+    const payload = extractStatusPayload(await res.text());
+    return parsePurifierState(payload, await this.fetchFilters(device));
+  }
+
+  /**
+   * Filter life from Coway's supplies endpoint. Not every model populates it --
+   * the 250S's is still unfinished -- so a failure here is not fatal; the caller
+   * falls back to the sensor attributes embedded in the status page.
+   */
+  async fetchFilters(device: PurifierDevice): Promise<FilterReading[]> {
+    const url = new URL(
+      `${Endpoint.PROXY}/com/places/${device.placeId}/devices/${device.deviceSerial}/supplies`,
+    );
+    url.search = new URLSearchParams({
+      membershipYn: 'N', membershipType: '', langCd: 'en',
+    }).toString();
+
+    try {
+      const body = await this.getJson(url);
+      const list = (body.data?.suppliesList ?? []) as Json[];
+      return list
+        .filter((f) => typeof f.filterRemain === 'number')
+        .map((f) => ({
+          name: String(f.supplyNm ?? ''),
+          remainPct: Number(f.filterRemain),
+        }));
+    } catch {
+      return [];
+    }
   }
 
   /** Send one control attribute. Coway accepts a single attribute per call. */

@@ -10,42 +10,54 @@ Written in TypeScript with **no runtime dependencies**.
 
 ## Device compatibility
 
-**Verified on exactly one device: the Airmega 400S (`AP-2015E`, model code `02EUZ`).**
-Everything below that is inference from the IoCare protocol, not testing, and
-there are known divergences between models. Please read this before installing.
+The plugin adapts to whatever the device reports rather than assuming one model:
+filters, pollutant sensors and the panel light are each published only when the
+hardware actually exposes them. That should make it work across the WiFi Airmega
+range — but "should" is doing real work in that sentence, so the table below
+separates what has been proven from what has only been implemented.
 
-| Model | Status | Notes |
+### Verified
+
+| Model | Model code | What was tested |
 |---|---|---|
-| **Airmega 400S** | **Verified** | Discovery, status, and control all confirmed against real hardware. |
-| Airmega 300S / 400 | Likely works | Same family and attribute set. Untested. |
-| Airmega 250S | Partly broken | Panel light control is **inverted** (see below). Rapid mode is a 250S feature this plugin reads but never sets. |
-| Airmega IconS | Partly broken | Same inverted light problem, plus a "half off" light state this plugin cannot express. |
-| Airmega AP-1512HHS | Likely works | Eco mode is specific to this model; the plugin reads it but never sets it. |
-| UK / EU models (`02FMG`, `02FMF`, `02FWN`) | Missing a filter | These have a third *odor* filter (attribute `0013`) that this plugin does not expose. |
-| Non-WiFi Airmega (e.g. AP-1512HH) | **Will not work** | No network connectivity, so nothing to talk to. |
+| **Airmega 400S** | `AP-2015E` / `02EUZ` | Discovery, status, fan, power, modes, filters (both sources), air quality, control round-trip — all against real hardware. |
 
-### Known model-specific problems
+### Compatible, not verified
 
-**Panel light is inverted on the 250S and IconS.** Coway uses attribute `0007`
-for the light under two contradictory conventions. On the 400S and similar,
-`2` means on and `0` means off — which is what this plugin implements. On the
-250S and IconS the same attribute is an enum where `0` is on, `2` is off, and
-`3` is a half-off state. If you enable `exposeLight` on one of those models the
-control will be backwards. Leave `exposeLight` off until this is fixed.
+Implemented from Coway's protocol and expected to work, but never run against
+one. If you own one of these, please report back.
 
-**Filter life may read as 100% on models that do not populate the sensor
-fields.** Filter percentages are derived from sensor attributes `0011` and
-`0012`. Coway also has a separate filter endpoint that this plugin does not
-currently consult, so on a model that reports filters only through that endpoint
-HomeKit will show a permanent, incorrect 100%.
+| Model | Expected to work | Caveats |
+|---|---|---|
+| Airmega 300S / 400 | Full | Same attribute set and filter layout as the 400S. |
+| Airmega 250S | Full | Panel light uses the inverted convention — auto-detected, or set `lightConvention` manually. Coway's filter endpoint is unfinished for this model, so filter life comes from sensors instead. Rapid mode needs `exposeModeSwitches`. |
+| Airmega IconS | Light is approximate | Same inverted convention as the 250S. Its "half off" light state is reported as on, since HomeKit has only a boolean. |
+| Airmega AP-1512HHS | Full | Eco mode needs `exposeModeSwitches`. |
+| UK / EU models | Full | Model codes `02FMG` (UK), `02FMF` / `02FWN` (EU). Their third *odor* filter is published automatically when present. |
 
-**Rapid, eco and night modes are read-only.** HomeKit's `TargetAirPurifierState`
-has only AUTO and MANUAL, so these are reported but cannot be selected from the
-Home app.
+### Will not work
 
-If you run this on a model not listed as verified, please open an issue with the
-`modelCode` and `productModel` from your Homebridge log and what did or did not
-work — that is the only way this table improves.
+| Model | Why |
+|---|---|
+| Non-WiFi Airmega (AP-1512HH, 200M, …) | No network connectivity. There is nothing to talk to. |
+
+### How the adaptation works
+
+- **Filters.** Read from Coway's supplies endpoint where it works, falling back
+  to the status page's sensor attributes where it does not. A filter the device
+  never reports is simply not published, rather than shown at a reassuring and
+  wrong 100%.
+- **Pollutants.** PM10 and PM2.5 appear only once the device reports a reading,
+  for the same reason — a constant `0` would read as pristine air.
+- **Odor filter.** Published automatically on models that report attribute `0013`.
+- **Panel light.** Coway uses attribute `0007` under two contradictory
+  conventions: on the 400S `2` is on, while on the 250S and IconS it is an enum
+  where `0` is on and `2` is off. Readings of `0` and `2` are valid under both
+  and cannot be told apart, so the plugin defaults to the verified 400S
+  convention and switches automatically if it ever sees a `1` or `3`, which only
+  the enum convention produces. `lightConvention` overrides it outright.
+- **Modes.** HomeKit's air purifier has only Auto and Manual. Night, Rapid and
+  Eco are always *reported*; setting them needs `exposeModeSwitches`.
 
 ## How it works, and what that costs you
 
@@ -77,8 +89,9 @@ and the fix lives in `src/purifierState.ts`.
 |---|---|
 | **Air Purifier** | Active, Current/Target Air Purifier State, Rotation Speed, Lock Physical Controls |
 | **Air Quality Sensor** | Air Quality, PM10 Density, PM2.5 Density *(only on models that report it)* |
-| **Filter Maintenance** ×2 | Filter Life Level and Filter Change Indication, for the pre-filter and the Max2 filter |
+| **Filter Maintenance** ×2–3 | Filter Life Level and Filter Change Indication. Pre-filter and Max2 on all models; a third odor filter on UK/EU models. Each appears only if the device reports it. |
 | **Lightbulb** | The panel light — optional, disabled by default |
+| **Switch** ×3 | Night / Rapid / Eco — optional, disabled by default. HomeKit's air purifier cannot express these. |
 
 ### Mapping notes
 
@@ -88,7 +101,7 @@ Coway's hardware and HomeKit's model do not line up exactly. Where they diverge:
   33 / 67 / 100. Dragging to 0 powers the unit off.
 - **Modes.** HomeKit's `TargetAirPurifierState` offers only AUTO and MANUAL.
   Coway's *auto* and *eco* both report as AUTO; *night* and *rapid* report as
-  MANUAL, since HomeKit has no vocabulary for them.
+  MANUAL. Enable `exposeModeSwitches` to select them directly.
 - **Air quality.** Coway grades 1–4; HomeKit uses 1–5. The mapping skips
   HomeKit's GOOD so Coway's worst grade still reaches POOR.
 - **Filter life.** Coway reports consumption, HomeKit wants life remaining, so
@@ -126,7 +139,9 @@ Configurable through the Homebridge UI, or by hand:
 | `username` | string | — | IoCare account email. Required. |
 | `password` | string | — | IoCare account password. Required. |
 | `pollIntervalSeconds` | integer | `60` | How often to read state. Values below 30 are clamped. |
-| `exposeLight` | boolean | `false` | Expose the panel light as a HomeKit bulb. **Inverted on the 250S/IconS — see compatibility.** |
+| `exposeLight` | boolean | `false` | Expose the panel light as a HomeKit bulb. |
+| `exposeModeSwitches` | boolean | `false` | Expose Night / Rapid / Eco as switches, which HomeKit cannot otherwise reach. |
+| `lightConvention` | `onOff` \| `mode` | `onOff` | Override the panel-light encoding. Auto-detected; only set this if the light behaves backwards. |
 
 Purifiers are discovered automatically across every "place" on the account.
 

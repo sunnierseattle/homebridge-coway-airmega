@@ -3,26 +3,36 @@ import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge
 import type { CowayClient, PurifierDevice } from './cowayClient.js';
 import type { CowayPlatform } from './platform.js';
 import {
-  fromRotationSpeed, toAirQuality, toRotationSpeed, type PurifierState,
+  detectLightConvention, fromRotationSpeed, isLightOn, lightCommand, toAirQuality,
+  toRotationSpeed, type LightConvention, type PurifierState,
 } from './purifierState.js';
 import { Attr, Mode } from './settings.js';
 
+/** The optional mode switches, and the attribute value each selects. */
+const MODE_SWITCHES = [
+  { key: 'night', label: 'Night Mode', value: Mode.NIGHT, flag: 'nightMode' },
+  { key: 'rapid', label: 'Rapid Mode', value: Mode.RAPID, flag: 'rapidMode' },
+  { key: 'eco', label: 'Eco Mode', value: Mode.ECO, flag: 'ecoMode' },
+] as const;
+
 /**
- * One Airmega, exposed as an air purifier plus its air-quality sensor, two
- * filter indicators and (optionally) the panel light.
+ * One Airmega, exposed as an air purifier plus its air-quality sensor, whatever
+ * filters the model actually reports, and optionally the panel light and the
+ * modes HomeKit has no vocabulary for.
  *
- * Every characteristic reads from `state`, a snapshot the platform refreshes on
- * a timer. HomeKit reads characteristics in bursts, and serving each one from
- * the cloud directly would turn a single tile render into a dozen requests.
+ * Services that depend on hardware the model may not have are created lazily,
+ * on the first poll that proves the capability exists. Publishing them eagerly
+ * would show a filter permanently at 100% on a model that reports none — a
+ * reassuring, wrong reading being worse than an absent one.
  */
 export class AirmegaAccessory {
   private readonly purifier: Service;
   private readonly airQuality: Service;
-  private readonly preFilter: Service;
-  private readonly max2Filter: Service;
-  private readonly light?: Service;
+  private light?: Service;
+  private readonly modeSwitches = new Map<string, Service>();
 
   private state?: PurifierState;
+  private lightConvention: LightConvention;
 
   constructor(
     private readonly platform: CowayPlatform,
@@ -31,6 +41,7 @@ export class AirmegaAccessory {
     private readonly device: PurifierDevice,
   ) {
     const { Service, Characteristic } = platform;
+    this.lightConvention = platform.config.lightConvention ?? 'onOff';
 
     this.accessory.getService(Service.AccessoryInformation)!
       .setCharacteristic(Characteristic.Manufacturer, 'Coway')
@@ -45,14 +56,12 @@ export class AirmegaAccessory {
       .onSet((v) => this.send(Attr.POWER, v ? '1' : '0'));
 
     this.purifier.getCharacteristic(Characteristic.CurrentAirPurifierState)
-      .onGet(() => this.read((s) => (s.isOn ? 2 : 0), 0)); // PURIFYING_AIR / INACTIVE
+      .onGet(() => this.read((s) => (s.isOn ? 2 : 0), 0));
 
     this.purifier.getCharacteristic(Characteristic.TargetAirPurifierState)
       .onGet(() => this.read((s) => (s.autoMode ? 1 : 0), 1))
       .onSet((v) => (v === 1
         ? this.send(Attr.MODE, Mode.AUTO)
-        // Leaving auto has no direct command; selecting a fan speed is what
-        // actually puts the unit into manual, so re-assert the current speed.
         : this.send(Attr.FAN_SPEED, fromRotationSpeed(toRotationSpeed(this.state?.fanSpeed ?? 1)))));
 
     this.purifier.getCharacteristic(Characteristic.RotationSpeed)
@@ -70,75 +79,80 @@ export class AirmegaAccessory {
       ?? this.accessory.addService(Service.AirQualitySensor, `${device.nickname} Air Quality`);
     this.airQuality.getCharacteristic(Characteristic.AirQuality)
       .onGet(() => this.read((s) => toAirQuality(s.aqGrade), 0));
-    this.airQuality.getCharacteristic(Characteristic.PM10Density)
-      .onGet(() => this.read((s) => s.pm10 ?? 0, 0));
-
-    this.preFilter = this.filterService('Pre-Filter');
-    this.max2Filter = this.filterService('Max2 Filter');
-    this.bindFilter(this.preFilter, (s) => s.preFilterPct);
-    this.bindFilter(this.max2Filter, (s) => s.max2Pct);
 
     if (platform.config.exposeLight) {
       this.light = this.accessory.getService(Service.Lightbulb)
         ?? this.accessory.addService(Service.Lightbulb, `${device.nickname} Light`);
       this.light.getCharacteristic(Characteristic.On)
-        .onGet(() => this.read((s) => s.lightOn, false))
-        .onSet((v) => this.send(Attr.LIGHT, v ? '2' : '0'));
+        .onGet(() => this.read((s) => isLightOn(s.lightRaw, this.lightConvention), false))
+        .onSet((v) => this.send(Attr.LIGHT, lightCommand(Boolean(v), this.lightConvention)));
+    }
+
+    if (platform.config.exposeModeSwitches) {
+      for (const m of MODE_SWITCHES) {
+        const svc = this.accessory.getServiceById(Service.Switch, m.key)
+          ?? this.accessory.addService(Service.Switch, `${device.nickname} ${m.label}`, m.key);
+        svc.getCharacteristic(Characteristic.On)
+          .onGet(() => this.read((s) => Boolean(s[m.flag]), false))
+          // Turning a mode off has no inverse command, so fall back to auto.
+          .onSet((v) => this.send(Attr.MODE, v ? m.value : Mode.AUTO));
+        this.modeSwitches.set(m.key, svc);
+      }
     }
   }
 
-  private filterService(name: string): Service {
+  /** Create a filter service only once the device has proven it has that filter. */
+  private filterService(label: string, subtype: string): Service {
     const { Service } = this.platform;
-    const subtype = name.toLowerCase().replace(/\W+/g, '-');
     return this.accessory.getServiceById(Service.FilterMaintenance, subtype)
-      ?? this.accessory.addService(Service.FilterMaintenance, `${this.device.nickname} ${name}`, subtype);
+      ?? this.accessory.addService(
+        Service.FilterMaintenance, `${this.device.nickname} ${label}`, subtype);
   }
 
-  private bindFilter(service: Service, pick: (s: PurifierState) => number | undefined): void {
-    const { Characteristic } = this.platform;
-    service.getCharacteristic(Characteristic.FilterChangeIndication)
-      .onGet(() => this.read((s) => ((pick(s) ?? 100) <= 0 ? 1 : 0), 0));
-    service.getCharacteristic(Characteristic.FilterLifeLevel)
-      .onGet(() => this.read((s) => pick(s) ?? 100, 100));
-  }
-
-  /**
-   * Serve a characteristic from the last snapshot. Before the first poll lands
-   * we return `fallback` rather than blocking HomeKit on a cloud round-trip.
-   */
   private read<T extends CharacteristicValue>(pick: (s: PurifierState) => T, fallback: T): T {
     return this.state ? pick(this.state) : fallback;
   }
 
   private async send(attribute: string, value: string): Promise<void> {
     await this.client.control(this.device, attribute, value);
-    // Coway needs a moment before the status page reflects the change, so
-    // update optimistically and let the next poll correct us if it disagrees.
-    if (this.state) {
-      if (attribute === Attr.POWER) {
-        this.state.isOn = value === '1';
-      }
-      if (attribute === Attr.FAN_SPEED) {
-        this.state.fanSpeed = Number(value);
-      }
-      if (attribute === Attr.MODE) {
-        this.state.autoMode = value === Mode.AUTO || value === Mode.ECO;
-      }
-      if (attribute === Attr.LIGHT) {
-        this.state.lightOn = value === '2';
-      }
-      if (attribute === Attr.LOCK) {
-        this.state.buttonLock = value === '1';
-      }
+    if (!this.state) {
+      return;
+    }
+    // Coway's status page lags a command, so update optimistically and let the
+    // next poll correct us if it disagrees.
+    if (attribute === Attr.POWER) {
+      this.state.isOn = value === '1';
+    }
+    if (attribute === Attr.FAN_SPEED) {
+      this.state.fanSpeed = Number(value);
+    }
+    if (attribute === Attr.LIGHT) {
+      this.state.lightRaw = Number(value);
+    }
+    if (attribute === Attr.LOCK) {
+      this.state.buttonLock = value === '1';
+    }
+    if (attribute === Attr.MODE) {
+      this.state.autoMode = value === Mode.AUTO || value === Mode.ECO;
+      this.state.nightMode = value === Mode.NIGHT;
+      this.state.rapidMode = value === Mode.RAPID;
+      this.state.ecoMode = value === Mode.ECO;
     }
   }
 
-  /** Pull one fresh snapshot and push it into every characteristic. */
   async refresh(): Promise<void> {
     const { Characteristic } = this.platform;
     try {
       const s = await this.client.readState(this.device);
       this.state = s;
+
+      // A value only the enum convention can produce settles the ambiguity.
+      const detected = detectLightConvention(s.lightRaw);
+      if (detected && detected !== this.lightConvention) {
+        this.lightConvention = detected;
+        this.platform.log.info(
+          `${this.device.nickname}: detected the "${detected}" panel-light convention.`);
+      }
 
       this.purifier.updateCharacteristic(Characteristic.Active, s.isOn ? 1 : 0);
       this.purifier.updateCharacteristic(Characteristic.CurrentAirPurifierState, s.isOn ? 2 : 0);
@@ -147,25 +161,36 @@ export class AirmegaAccessory {
       this.purifier.updateCharacteristic(Characteristic.LockPhysicalControls, s.buttonLock ? 1 : 0);
 
       this.airQuality.updateCharacteristic(Characteristic.AirQuality, toAirQuality(s.aqGrade));
-      this.airQuality.updateCharacteristic(Characteristic.PM10Density, s.pm10 ?? 0);
-      // Not every model has a PM2.5 sensor (the 400S reports only PM10).
-      // Publishing a permanent 0 would read as pristine air, so the
-      // characteristic only appears once the device actually reports a value.
+      // Only publish a pollutant the model actually measures; a constant 0
+      // would read as pristine air.
+      if (s.pm10 !== undefined) {
+        this.airQuality.updateCharacteristic(Characteristic.PM10Density, s.pm10);
+      }
       if (s.pm25 !== undefined) {
         this.airQuality.updateCharacteristic(Characteristic.PM2_5Density, s.pm25);
       }
 
-      this.updateFilter(this.preFilter, s.preFilterPct);
-      this.updateFilter(this.max2Filter, s.max2Pct);
-      this.light?.updateCharacteristic(Characteristic.On, s.lightOn);
+      this.updateFilter('Pre-Filter', 'pre-filter', s.preFilterPct);
+      this.updateFilter('Max2 Filter', 'max2-filter', s.max2Pct);
+      this.updateFilter('Odor Filter', 'odor-filter', s.odorFilterPct);
+
+      this.light?.updateCharacteristic(
+        Characteristic.On, isLightOn(s.lightRaw, this.lightConvention));
+      for (const m of MODE_SWITCHES) {
+        this.modeSwitches.get(m.key)?.updateCharacteristic(Characteristic.On, Boolean(s[m.flag]));
+      }
     } catch (err) {
       this.platform.log.debug(`Poll failed for ${this.device.nickname}: ${(err as Error).message}`);
     }
   }
 
-  private updateFilter(service: Service, pct: number | undefined): void {
+  private updateFilter(label: string, subtype: string, pct: number | undefined): void {
+    if (pct === undefined) {
+      return;
+    } // Model does not report this filter.
     const { Characteristic } = this.platform;
-    service.updateCharacteristic(Characteristic.FilterLifeLevel, pct ?? 100);
-    service.updateCharacteristic(Characteristic.FilterChangeIndication, (pct ?? 100) <= 0 ? 1 : 0);
+    const svc = this.filterService(label, subtype);
+    svc.updateCharacteristic(Characteristic.FilterLifeLevel, pct);
+    svc.updateCharacteristic(Characteristic.FilterChangeIndication, pct <= 0 ? 1 : 0);
   }
 }

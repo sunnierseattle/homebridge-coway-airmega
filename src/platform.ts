@@ -12,6 +12,8 @@ interface CowayConfig extends PlatformConfig {
   password?: string;
   pollIntervalSeconds?: number;
   exposeLight?: boolean;
+  exposeModeSwitches?: boolean;
+  lightConvention?: 'onOff' | 'mode';
 }
 
 export class CowayPlatform implements DynamicPlatformPlugin {

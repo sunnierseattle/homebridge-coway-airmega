@@ -6,6 +6,9 @@ import {
   toAirQuality,
   toRotationSpeed,
   fromRotationSpeed,
+  isLightOn,
+  lightCommand,
+  detectLightConvention,
 } from './purifierState.js';
 
 describe('extractStatusPayload', () => {
@@ -56,7 +59,9 @@ describe('parsePurifierState', () => {
     expect(s.isOn).toBe(true);
     expect(s.nightMode).toBe(true);
     expect(s.autoMode).toBe(false);
-    expect(s.lightOn).toBe(false);
+    // Light meaning is model-dependent now, so the raw value is what's parsed.
+    expect(s.lightRaw).toBe(0);
+    expect(isLightOn(s.lightRaw, 'onOff')).toBe(false);
     expect(s.buttonLock).toBe(true);
   });
 
@@ -112,5 +117,76 @@ describe('toAirQuality', () => {
   it('reports UNKNOWN rather than guessing when the grade is missing or unexpected', () => {
     expect(toAirQuality(undefined)).toBe(0);
     expect(toAirQuality(99)).toBe(0);
+  });
+});
+
+describe('filter life, across the sources different models populate', () => {
+  const payload = (sensor: Record<string, number>) => ({
+    status: { '0001': 1, '0002': 1 },
+    sensor,
+    network: { wifiConnected: true },
+    iaqGrade: 1,
+  });
+
+  it('prefers Coway\'s supplies endpoint when it returns readings', () => {
+    const s = parsePurifierState(payload({ '0011': 100, '0012': 100 }), [
+      { name: 'Pre-Filter', remainPct: 62 },
+      { name: 'Max2', remainPct: 41 },
+    ]);
+    expect(s.preFilterPct).toBe(62);
+    expect(s.max2Pct).toBe(41);
+  });
+
+  it('falls back to sensor attributes when the endpoint returns nothing', () => {
+    // The 250S has no working supplies endpoint yet, so sensors are all it has.
+    const s = parsePurifierState(payload({ '0011': 30, '0012': 20 }), []);
+    expect(s.preFilterPct).toBe(70);
+    expect(s.max2Pct).toBe(80);
+  });
+
+  it('reports the odor filter that UK and EU models carry', () => {
+    const s = parsePurifierState(payload({ '0011': 10, '0013': 25 }));
+    expect(s.odorFilterPct).toBe(75);
+  });
+
+  it('leaves the odor filter undefined on models without one', () => {
+    expect(parsePurifierState(payload({ '0011': 10 })).odorFilterPct).toBeUndefined();
+  });
+
+  it('matches the pre-filter by name and treats any other supply as the main filter', () => {
+    const s = parsePurifierState(payload({}), [
+      { name: 'Max2', remainPct: 55 },
+      { name: 'Pre-Filter', remainPct: 90 },
+    ]);
+    expect(s.preFilterPct).toBe(90);
+    expect(s.max2Pct).toBe(55);
+  });
+});
+
+describe('light conventions', () => {
+  it('reads the verified 400S convention, where 2 is on', () => {
+    expect(isLightOn(2, 'onOff')).toBe(true);
+    expect(isLightOn(0, 'onOff')).toBe(false);
+  });
+
+  it('reads the 250S/IconS enum convention, where 0 is on and 2 is off', () => {
+    expect(isLightOn(0, 'mode')).toBe(true);
+    expect(isLightOn(2, 'mode')).toBe(false);
+    expect(isLightOn(3, 'mode')).toBe(true); // half-off is still lit
+  });
+
+  it('emits the right value for each convention when switching on', () => {
+    expect(lightCommand(true, 'onOff')).toBe('2');
+    expect(lightCommand(false, 'onOff')).toBe('0');
+    expect(lightCommand(true, 'mode')).toBe('0');
+    expect(lightCommand(false, 'mode')).toBe('2');
+  });
+
+  it('detects the enum convention from values only it can produce', () => {
+    // 0 and 2 are ambiguous; 1 (AQI-off) and 3 (half-off) are not.
+    expect(detectLightConvention(1)).toBe('mode');
+    expect(detectLightConvention(3)).toBe('mode');
+    expect(detectLightConvention(0)).toBeUndefined();
+    expect(detectLightConvention(2)).toBeUndefined();
   });
 });
