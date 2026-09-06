@@ -1,0 +1,42 @@
+{
+  "pluginAlias": "CowayAirmega",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Controls WiFi-connected Coway Airmega purifiers through the IoCare cloud. Coway offers no local API, so an IoCare account is required.",
+  "footerDisplay": "Accounts that sign in with Google or Apple cannot be used — the plugin needs an email/password login. Coway also forces a password change every 60 days.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "Coway Airmega",
+        "required": true
+      },
+      "username": {
+        "title": "IoCare Email",
+        "type": "string",
+        "format": "email",
+        "required": true
+      },
+      "password": {
+        "title": "IoCare Password",
+        "type": "string",
+        "required": true,
+        "x-schema-form": { "type": "password" }
+      },
+      "pollIntervalSeconds": {
+        "title": "Poll Interval (seconds)",
+        "type": "integer",
+        "default": 60,
+        "minimum": 30,
+        "description": "How often to read state from Coway. Each poll is several cloud requests; below 30s is rejected."
+      },
+      "exposeLight": {
+        "title": "Expose the panel light as a bulb",
+        "type": "boolean",
+        "default": false
+      }
+    }
+  }
+}
